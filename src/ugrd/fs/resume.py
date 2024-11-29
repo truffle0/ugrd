@@ -41,6 +41,7 @@ def _resume(self) -> None:
 def handle_resume(self) -> None:
     return _resume(self)
 
-@contains('late_resume', "WARNING: Using late resume, may be unstable in certain configurations. Use with caution.", log_level=30)
+@contains('late_resume')
 def handle_late_resume(self) -> None:
+    self.logger.warning("WARNING: Late resume enabled, may be unstable in certain configurations. Use with caution.")
     return _resume(self)
