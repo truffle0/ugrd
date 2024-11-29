@@ -276,9 +276,9 @@ Importing this module will run `btrfs device scan` and pull btrfs modules.
 
 When enabled, attempts to resume after hibernation if resume= is passed on the kernel command line.
 
-> Please use the following option with **CAUTION** as it can be unstable in certain configurations! Any writes to disks that occur pre-resume run the risk of causing system instability!
+> Please use the following option with **CAUTION** as it can be unstable in certain configurations! Any writes to disks that occur pre-resume run the risk of causing system instability! For more information have a read of the warnings in the [kernel docs](https://www.kernel.org/doc/html/latest/power/swsusp.html).
 
-* `late_resume` (true) When enabled will attempt to resume from hibernation after devices have been mounted/decrypted. This allows resuming from swap devices that are encrypted or otherwise require special handling before being visible to the kernel.
+* `late_resume` (true) When enabled will attempt to resume from hibernation after decryption and device mapping, allowing resume from encrypted or otherwise hidden swap devices.
 
 ### Cryptographic modules
 
