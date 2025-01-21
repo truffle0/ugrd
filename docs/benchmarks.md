@@ -4,6 +4,8 @@
 
 People say python is slow, but UGRD is very fast, even on slow hardware.
 
+#### Raspberry pi 3
+
 Using a rpi3 on powersave:
 
 ```
@@ -22,7 +24,7 @@ user    0m3.744s
 sys     0m2.147s
 ```
 
-#### Compression
+##### Compression
 
 ugrd compression is limited by single thread python performance, but still builds faster than dracut which calls zstd:
 
@@ -42,19 +44,74 @@ user    0m35.386s
 sys     0m2.510s
 ```
 
+#### 7950x
+
+```
+time dracut --no-compress --force 
+
+real	0m7.142s
+user	0m3.233s
+sys     0m4.811s
+```
+
+```
+time ugrd --no-compress
+
+real	0m0.864s
+user	0m0.424s
+sys     0m0.583s
+```
+
+##### Compression
+
+```
+time dracut --force
+
+real	0m9.653s
+user	0m29.121s
+sys     0m5.253s
+```
+
+```
+time ugrd
+
+real	0m13.011s
+user	0m12.349s
+sys     0m0.643s
+```
+
+> Here, dracut is able to run faster by making use of threading with the zstd utility, python xz currently does not thread
+> https://github.com/python/cpython/pull/114954
+
+
 ### Image size
 
 ugrd makes very small images, even with no compression, it creates smaller images than dracut with zstd compression!
 
+#### Raspberry pi 3
+
 | Generator | Compression   | Size  | Mode     |
 |-----------|---------------|-------|----------|
-| dracut    | no            | 30M   | hostonly |
-| dracut    | no            | 24M   | standard |
+| dracut    | none          | 30M   | hostonly |
+| dracut    | none          | 24M   | standard |
 | dracut    | zstd          | 13M   | standard |
+| ugrd      | none          | 9.41M | hostonly |
 | dracut    | zstd          | 8.5M  | hostonly |
-| ugrd      | no            | 9.41M | standard |
-| ugrd      | xz (default)  | 2.64M | standard |
+| ugrd      | xz (default)  | 2.64M | hostonly |
 
+
+#### 7950x
+
+| Generator | Compression   | Size   | Mode     |
+|-----------|---------------|--------|----------|
+| dracut    | none          | 392M   | standard |
+| dracut    | none          | 192M   | hostonly |
+| dracut    | zstd          | 91M    | standard |
+| ugrd      | none          | 65.36M | hostonly |
+| dracut    | zstd          | 49M    | hostonly |
+| ugrd      | xz (default)  | 18.89M | hostonly |
+
+> For this image, luks, gpg, and yubikey modules are required, greatly increasing the image size
 
 ### Boot time
 

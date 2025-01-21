@@ -10,12 +10,12 @@ This will make systemd think that udev is working and not time out.
 
 
 def fake_dm_udev(self) -> str:
-    """returns a bash script to fake udev for dm devices."""
+    """returns a shell function to fake udev for dm devices."""
     return r"""
     for dm in /sys/block/dm-*; do
         source "${dm}/uevent"
         einfo "Faking udev for: ${DEVNAME}"
         udev_db_file="/run/udev/data/b${MAJOR}:${MINOR}"
-        echo -e 'E:DM_UDEV_PRIMARY_SOURCE_FLAG=1\n' > "${udev_db_file}"
+        printf 'E:DM_UDEV_PRIMARY_SOURCE_FLAG=1\n' > "${udev_db_file}"
     done
     """

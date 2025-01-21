@@ -1,11 +1,11 @@
-__version__ = "1.12.2"
+__version__ = "2.0.0"
 __author__ = "desultory"
 
 from pathlib import Path
 
 from ugrd import ValidationError
 from ugrd.fs.mounts import _resolve_overlay_lower_dir
-from zenlib.util import contains, unset
+from zenlib.util import contains, unset, colorize
 
 
 class SubvolNotFound(Exception):
@@ -88,7 +88,7 @@ def autodetect_root_subvol(self):
     """Detects the root subvolume."""
     try:
         root_subvol = _get_mount_subvol(self, "/")
-        self.logger.info("Detected root subvolume: %s", root_subvol)
+        self.logger.info("[btrfs] Detected root subvolume: %s", colorize(root_subvol, "cyan"))
         self["root_subvol"] = root_subvol
     except SubvolNotFound:
         self.logger.warning("Failed to detect root subvolume.")
@@ -99,7 +99,7 @@ def autodetect_root_subvol(self):
 @contains("subvol_selector", message="subvol_selector is not enabled, skipping.")
 @unset("root_subvol", message="root_subvol is set, skipping.")
 def select_subvol(self) -> str:
-    """Returns a bash script to list subvolumes on the root volume."""
+    """Returns a shell script to list subvolumes on the root volume."""
     # TODO: Figure out a way to make the case prompt more standard
     return f"""
     mount -t btrfs -o subvolid=5,ro $(readvar MOUNTS_ROOT_SOURCE) {self["_base_mount_path"]}
@@ -115,7 +115,7 @@ def select_subvol(self) -> str:
                     ewarn 'Invalid selection'
                 else
                     einfo "Selected subvolume: $subvol"
-                    echo -n ",subvol=$subvol" >> /run/vars/MOUNTS_ROOT_OPTIONS
+                    printf "%s" ",subvol=$subvol" >> /run/vars/MOUNTS_ROOT_OPTIONS
                     break
                 fi
                 ;;
@@ -130,4 +130,4 @@ def select_subvol(self) -> str:
 def set_root_subvol(self) -> str:
     """Adds the root_subvol to the root_mount options."""
     _validate_root_subvol(self)
-    return f"""echo -n ",subvol={self['root_subvol']}" >> /run/vars/MOUNTS_ROOT_OPTIONS"""
+    return f"""printf ",subvol={self['root_subvol']}" >> /run/vars/MOUNTS_ROOT_OPTIONS"""

@@ -1,7 +1,8 @@
 __author__ = "desultory"
-__version__ = "3.13.0"
+__version__ = "4.1.0"
 
 from pathlib import Path
+from shutil import rmtree, which
 from typing import Union
 
 from ugrd import AutodetectError, ValidationError
@@ -18,11 +19,29 @@ def detect_tmpdir(self) -> None:
         self["tmpdir"] = Path(tmpdir)
 
 
+def _get_shell_path(self, shell_name) -> Path:
+    """Gets the real path to the shell binary."""
+    if shell := which(shell_name):
+        return Path(shell).resolve()
+    else:
+        raise AutodetectError(f"Shell '{shell_name}' not found.")
+
+
+def get_shell(self) -> None:
+    """Gets the shell, uses /bin/sh if a shell is not set"""
+    if shell := self["shell"]:
+        self.logger.info("Using shell: %s", colorize(shell, "blue", bright=True))
+        self["binaries"] = shell
+        shell_path = _get_shell_path(self, shell)
+        self["symlinks"]["shell"] = {"target": "/bin/sh", "source": shell_path}
+    else:
+        self.logger.info("Using default shell: %s", colorize("/bin/sh", "cyan"))
+        self["binaries"] = "/bin/sh"  # This should pull /bin/sh and the target if it's a symlink
+
+
 @contains("clean", "Skipping cleaning build directory", log_level=30)
 def clean_build_dir(self) -> None:
     """Cleans the build directory."""
-    from shutil import rmtree
-
     build_dir = self._get_build_path("/")
 
     if build_dir.is_dir():
@@ -42,6 +61,7 @@ def add_conditional_dependencies(self) -> None:
     """Adds conditional dependencies to the dependencies list.
     Keys are the dependency, values are a tuple of the condition type and value.
     """
+
     def add_dep(dep: str) -> None:
         try:  # Try to add it as a binary, if it fails, add it as a dependency
             self["binaries"] = dep
@@ -62,7 +82,6 @@ def calculate_dependencies(self, binary: str) -> list[Path]:
     :param binary: The binary to calculate dependencies for
     :return: A list of dependency paths
     """
-    from shutil import which
     from subprocess import run
 
     binary_path = which(binary)
@@ -87,22 +106,28 @@ def calculate_dependencies(self, binary: str) -> list[Path]:
             dependency = dependency[1:]
 
         dependency_paths.append(Path(dependency))
-
+    self.logger.debug("[%s] Calculated dependencies: %s" % (binary, dependency_paths))
     return dependency_paths
 
 
+@contains("merge_usr", "Skipping /usr merge", log_level=30)
 def handle_usr_symlinks(self) -> None:
-    """Adds symlinks for /usr/bin and /usr/sbin to /bin and /sbin."""
+    """Adds symlinks for /usr/bin and /usr/sbin to /bin and /sbin.
+    Warns if the symlink path is a directory on the host system.
+    """
     build_dir = self._get_build_path("/")
+    bin_dir = Path("bin")
+    sbin_dir = Path("sbin")
+    usr_sbin_dir = Path("usr/sbin")
 
-    if not (build_dir / "bin").is_dir():
-        if (build_dir / "usr/bin").is_dir():
-            self._symlink("/usr/bin", "/bin/")
-        else:
-            raise ValidationError("Neither /bin nor /usr/bin exist in the build directory")
-
-    if not (build_dir / "sbin").is_dir() and (build_dir / "usr/sbin").is_dir():
-        self._symlink("/usr/sbin", "/sbin/")
+    for d in [bin_dir, sbin_dir, usr_sbin_dir]:
+        if d.is_dir() and not d.is_symlink():
+            self.logger.warning("Merged-usr symlink target is a directory: %s" % d)
+            self.logger.warning("Set `merge_usr = false` to disable /usr merge.")
+        build_d = build_dir / d
+        if not build_d.is_dir() and not build_d.is_symlink():
+            self.logger.log(5, "Creating merged-usr symlink to /usr/bin: %s" % build_d)
+            self._symlink("/usr/bin", d)
 
 
 def deploy_dependencies(self) -> None:
@@ -285,6 +310,7 @@ def _process_binaries_multi(self, binary: str) -> None:
     # The first dependency will be the path of the binary itself, don't add this to the library paths
     self["dependencies"] = dependencies[0]
     for dependency in dependencies[1:]:
+        self.logger.debug("[%s] Adding dependency: %s" % (binary, dependency))
         self["dependencies"] = dependency
         if str(dependency.parent) not in self["library_paths"]:
             self.logger.info("Adding library path: %s" % dependency.parent)

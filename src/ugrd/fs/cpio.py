@@ -1,8 +1,9 @@
 __author__ = "desultory"
-__version__ = "3.7.0"
+__version__ = "3.7.1"
 
-
+from pathlib import Path
 from zenlib.util import contains, unset, colorize
+from pycpio.cpio.symlink import CPIO_Symlink
 
 
 @contains("check_cpio")
@@ -16,8 +17,8 @@ def check_cpio_deps(self) -> None:
 @contains("check_cpio")
 def check_cpio_funcs(self) -> None:
     """Checks that all included functions are in the profile included in the generated CPIO file."""
-    bash_func_names = [func + "() {" for func in self.included_functions]
-    _check_in_cpio(self, "etc/profile", bash_func_names)
+    sh_func_names = [func + "() {" for func in self.included_functions]
+    _check_in_cpio(self, "etc/profile", sh_func_names)
     return "All functions found in CPIO."
 
 
@@ -35,6 +36,16 @@ def _check_in_cpio(self, file, lines=[], quiet=False):
     cpio = self._cpio_archive
     file = str(file).lstrip("/")  # Normalize as it may be a path
     if file not in cpio.entries:
+        fp = Path(file)
+        while str(fp) not in ["/", "."]:
+            fp = fp.parent
+            if str(fp) not in cpio.entries:
+                continue
+
+            if isinstance(cpio.entries[str(fp)], CPIO_Symlink):
+                self.logger.debug("Resolving CPIO symlink: %s" % fp)
+                return _check_in_cpio(self, cpio.entries[str(fp)].data.decode("ascii").rstrip("\0"), lines, quiet=True)
+
         if not quiet:
             self.logger.warning("CPIO entries:\n%s" % "\n".join(cpio.entries.keys()))
         raise FileNotFoundError("File not found in CPIO: %s" % file)

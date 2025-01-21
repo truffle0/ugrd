@@ -1,5 +1,5 @@
 __author__ = "desultory"
-__version__ = "6.1.2"
+__version__ = "6.4.0"
 
 from pathlib import Path
 
@@ -34,6 +34,16 @@ def _process_autodetect_init(self, state) -> None:
     self.data["autodetect_init"] = state
 
 
+def _get_shell_path(self, shell_name) -> Path:
+    """Gets the real path to the shell binary."""
+    from shutil import which
+
+    if shell := which(shell_name):
+        return Path(shell).resolve()
+    else:
+        raise AutodetectError(f"Shell '{shell_name}' not found.")
+
+
 @contains("autodetect_init", log_level=30)
 def autodetect_init(self) -> None:
     """Autodetects the init_target."""
@@ -46,6 +56,15 @@ def autodetect_init(self) -> None:
         raise AutodetectError("init_target is not specified and could not be detected.")
 
 
+@unset("shebang", "shebang is already set.", log_level=10)
+def set_shebang(self) -> None:
+    """If the shebang is not set, sets it to:
+    #!/bin/sh {self["shebang_args"]}
+    """
+    self["shebang"] = f"#!/bin/sh {self['shebang_args']}"
+    self.logger.info("Setting shebang to: %s", colorize(self["shebang"], "cyan", bright=True))
+
+
 def export_switch_root_target(self) -> None:
     """Adds SWITCH_ROOT_TARGET to exports.
     Uses switch_root_target if set, otherwise uses the rootfs."""
@@ -56,7 +75,7 @@ def export_switch_root_target(self) -> None:
 
 
 def _find_init(self) -> str:
-    """Returns bash to find the init_target."""
+    """Returns a shell script to find the init_target."""
     return """
     for init_path in "/sbin/init" "/bin/init" "/init"; do
         if [ -e "$(readvar SWITCH_ROOT_TARGET)$init_path" ] ; then
@@ -71,7 +90,7 @@ def _find_init(self) -> str:
 
 
 def set_loglevel(self) -> str:
-    """Returns bash to set the log level."""
+    """Returns shell lines to set the log level."""
     return "readvar loglevel > /proc/sys/kernel/printk"
 
 
@@ -146,30 +165,30 @@ def rd_fail(self) -> list[str]:
             "    if plymouth --ping; then",
             '        plymouth display-message --text="Entering recovery shell"',
             "        plymouth hide-splash",
-            "        bash -l",
+            "        sh -l",
             "        plymouth show-splash",
             "    else",
-            "        bash -l",
+            "        sh -l",
             "    fi",
         ]
     else:
-        output += ["    bash -l"]
+        output += ["    sh -l"]
     output += ["fi", 'prompt_user "Press enter to restart init."', "rd_restart"]
     return output
 
 
 def setvar(self) -> str:
-    """Returns a bash function that sets a variable in /run/vars/{name}."""
+    """Returns a shell function that sets a variable in /run/vars/{name}."""
     return """
     if check_var debug; then
         edebug "Setting $1 to $2"
     fi
-    echo -n "$2" > "/run/vars/${1}"
+    printf "%s" "$2" > "/run/vars/${1}"
     """
 
 
 def readvar(self) -> str:
-    """Returns a bash function that reads a variable from /run/vars/{name}.
+    """Returns a shell function that reads a variable from /run/vars/{name}.
     The second arg can be a default value.
     If no default is supplied, and the variable is not found, it returns an empty string.
     """
@@ -177,25 +196,50 @@ def readvar(self) -> str:
 
 
 def check_var(self) -> str:
-    """Returns a bash function that checks the value of a variable.
+    """Returns a shell function that checks the value of a variable.
     if it's not set, tries to read the cmdline."""
     return r"""
-    if [ -z "$(readvar "$1")" ]; then  # preferably the variable is set, because this is slower
+    value=$(readvar "$1")
+    if [ -z "$value" ]; then
         cmdline=$(awk -F '--' '{print $1}' /proc/cmdline)  # Get everything before '--'
-        if grep -qE "(^|\s)$1(\s|$)" <<< "$cmdline"; then
+        if echo "$cmdline" | grep -qE "(^|\s)$1(\s|$)"; then
             return 0
         fi
         return 1
     fi
-    if [ "$(readvar "$1")" = "1" ]; then
+    if [ "$value" = "1" ]; then
         return 0
     fi
     return 1
     """
 
 
+def wait_enter(self) -> str:
+    """Returns a shell script that reads a single character from stdin.
+    If an argument is passed, use that as a timeout in seconds.
+    If enter is pressed, return 0, otherwise return 1.
+    """
+    return r"""
+    tty_env=$(stty -g)
+    t=$(printf "%.0f" "$(echo "${1:-0} * 10" | bc)")
+    if [ "$t" -gt 300 ]; then
+        stty raw -echo min 0 time 300
+    elif [ "$t" -gt 0 ]; then
+        stty raw -echo min 0 time "$t"
+    else
+        stty raw -echo
+    fi
+    char="$(dd bs=1 count=1 2>/dev/null)"
+    stty "$tty_env"
+    case "$char" in
+        $(printf '\r')) return 0 ;;
+        *) return 1 ;;
+    esac
+    """
+
+
 def prompt_user(self) -> list[str]:
-    """Returns a bash function that pauses until the user presses enter.
+    """Returns a shell function that pauses until the user presses enter.
     The first argument is the prompt message.
     The second argument is the timeout in seconds.
 
@@ -207,23 +251,20 @@ def prompt_user(self) -> list[str]:
             "if plymouth --ping; then",
             '    plymouth display-message --text="$prompt"',
             "else",
-            r'    echo -e "\e[1;35m *\e[0m $prompt"',
+            r'    printf "\033[1;35m *\033[0m %s\n" "$prompt"',
             "fi",
         ]
     else:
-        output += [r'echo -e "\e[1;35m *\e[0m $prompt"']
+        output += [r'printf "\033[1;35m *\033[0m %s\n" "$prompt"']
     output += [
-        'if [ -n "$2" ]; then',
-        '    read -t "$2" -rs && return 0 || return 1',
-        "else",
-        "    read -rs && return 0 || return 1",
-        "fi",
+        'wait_enter "$2"',
+        'return "$?"',
     ]
     return output
 
 
 def retry(self) -> str:
-    """Returns a bash function that retries a command some number of times.
+    """Returns a shell function that retries a command some number of times.
     The first argument is the number of retries. if 0, it retries 100 times.
     The second argument is the timeout in seconds.
     The remaining arguments represent the command to run.
@@ -258,7 +299,7 @@ def klog(self) -> str:
 
 # To feel more at home
 def edebug(self) -> str:
-    """Returns a bash function like edebug."""
+    """Returns a shell function like edebug."""
     return r"""
     if check_var quiet; then
         return
@@ -266,12 +307,12 @@ def edebug(self) -> str:
     if [ "$(readvar debug)" != "1" ]; then
         return
     fi
-    echo -e "\e[1;34m *\e[0m ${*}"
+    printf "\033[1;34m *\033[0m %s\n" "${*}"
     """
 
 
 def einfo(self) -> list[str]:
-    """Returns a bash function like einfo."""
+    """Returns a shell function like einfo."""
     if "ugrd.base.plymouth" in self["modules"]:
         output = [
             "if plymouth --ping; then",
@@ -282,12 +323,12 @@ def einfo(self) -> list[str]:
     else:
         output = []
 
-    output += ["if check_var quiet; then", "    return", "fi", r'echo -e "\e[1;32m *\e[0m ${*}"']
+    output += ["if check_var quiet; then", "    return", "fi", r'printf "\033[1;32m *\033[0m %s\n" "${*}"']
     return output
 
 
 def ewarn(self) -> list[str]:
-    """Returns a bash function like ewarn.
+    """Returns a shell function like ewarn.
     If plymouth is running, it displays a message instead of echoing.
     """
     if "ugrd.base.plymouth" in self["modules"]:
@@ -304,20 +345,20 @@ def ewarn(self) -> list[str]:
         "if check_var quiet; then",
         "    return",
         "fi",
-        r'echo -e "\e[1;33m *\e[0m ${*}"',
+        r'printf "\033[1;33m *\033[0m %s\n" "${*}"',
     ]
     return output
 
 
 def eerror(self) -> str:
-    """Returns a bash function like eerror."""
+    """Returns a shell function like eerror."""
     if "ugrd.base.plymouth" in self["modules"]:
         return r"""
         if plymouth --ping; then
             plymouth display-message --text="Error: ${*}"
             return
         fi
-        echo -e "\e[1;31m *\e[0m ${*}"
+        printf "\033[1;31m *\033[0m %s\n" "${*}"
         """
     else:
-        return r'echo -e "\e[1;31m *\e[0m ${*}"'
+        return r'printf "\033[1;31m *\033[0m %s\n" "${*}"'

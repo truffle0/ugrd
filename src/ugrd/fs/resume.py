@@ -1,9 +1,9 @@
-__version__ = "0.4.0"
+__version__ = "0.4.2"
 
 from zenlib.util import contains, unset
 
 def resume(self) -> None:
-    """Returns a bash script handling resume from hibernation.
+    """Returns a shell script handling resume from hibernation.
     Checks that /sys/power/resume is writable, resume= is set, and noresume is not set, if so,
     checks if PARTUUID= is in the resume var, and tries to use blkid to find the resume device.
     If the specified device exists, writes resume device to /sys/power/resume.
