@@ -6,18 +6,18 @@ test_copy_config = [ "test_resume", "test_swap_uuid" ]
 "ugrd.fs.resume" = [ "test_init_swap_uuid" ]
 
 [imports.init_main]
-"ugrd.fs.resume" = [ "handle_early_resume" ]
-
-[imports.init_premount]
-"ugrd.fs.resume" = [ "handle_late_resume"]
+"ugrd.fs.resume" = [ "handle_early_resume", "handle_late_resume" ]
 
 [imports.functions]
 "ugrd.fs.resume" = ["resume"]
 
 [custom_parameters]
 late_resume = "bool"
-test_resume = "bool"
-test_swap_uuid = "str"
+test_resume = "bool" # Test hibernation/resume pathways when test is enabled
+test_swap_uuid = "str" # Define the uuid of the swap partition on the test image
 
 [import_order.before]
-handle_resume = "mount_fstab"
+handle_early_resume = "mount_fstab"
+
+[import_order.after]
+handle_late_resume = "init_lvm"

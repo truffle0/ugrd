@@ -99,33 +99,65 @@ def make_test_image(self):
 
 def test_image(self):
     """Runs the test image in QEMU"""
+    import re
+    from subprocess import Popen, PIPE
+    from signal import signal, SIGALRM, alarm
+    import unicodedata as unicode
+
     image = make_test_image(self)
     qemu_cmd = _get_qemu_cmd_args(self, image)
+
+    re_panic = re.compile(r".*---\[ end Kernel panic - .* \]---.*")
+    re_ansi = re.compile(r"\x1b\[[\d;]+m")
+
+    # WARN: this timeout approach only works on the assumption that ugRD will
+    # *always* run in the main thread, as exceptions raised in signal handlers
+    # surface in the main thread
+    # See: https://docs.python.org/3/library/signal.html#handlers-and-exceptions
+    def timeout(signum, stack):
+        raise RuntimeError("Test timeout expired")
+
+    signal(SIGALRM, timeout)
 
     self.logger.debug("Test config:\n%s", image)
     self.logger.info("Test flag: %s", c_(self["test_flag"], "magenta"))
     self.logger.info("QEMU command: %s", c_(" ".join([str(arg) for arg in qemu_cmd]), bold=True))
 
-    try:
-        results = self._run(qemu_cmd, timeout=self["test_timeout"])
-    except RuntimeError as e:
-        raise RuntimeError("QEMU test failed: %s" % e)
+    qemu_stdout = []
+    with Popen(qemu_cmd, stdout=PIPE, stderr=PIPE, stdin=PIPE, universal_newlines=True) as proc:
+        try:
+            # Start timeout timer
+            alarm(self["test_timeout"])
 
-    stdout = results.stdout.decode("utf-8").split("\r\n")
-    self.logger.debug("QEMU output: %s", stdout)
+            self.logger.debug("QEMU output:")
+            for line in proc.stdout:
+                # Remove ALL ansi sequences and control characters, QEMU has a
+                # bad habit of messing with TTY properties when unfiltered
+                line = "".join(c for c in re_ansi.sub("", line).strip() if unicode.category(c) != "Cc")
+                qemu_stdout.append(line)
+                self.logger.debug(line)
 
-    # Get the time of the kernel panic
-    for line in stdout:
-        if line.endswith("exitcode=0x00000000"):
-            panic_time = line.split("]")[0][1:].strip()
-            self.logger.info("Test took: %s", c_(panic_time, "yellow", bold=True, bright=True))
-            break
-    else:
-        self.logger.warning("Unable to determine test duration from panic message.")
+                if self["test_flag"] in line:
+                    self.logger.info("Test passed!")
+                    break
 
-    if self["test_flag"] in stdout:
-        self.logger.info("Test passed")
-    else:
-        self.logger.error("Test failed")
-        self.logger.error("QEMU stdout:\n%s", stdout)
-        raise RuntimeError("Test failed")
+                # detect kernel panic (failed test)
+                if re_panic.match(line):
+                    panic_time = line.split("]")[0][1:].strip()
+                    self.logger.info("Test took: %s", c_(panic_time, "yellow", bold=True, bright=True))
+                    raise RuntimeError("Test kernel panic")
+
+        except RuntimeError as err:
+            self.logger.error(f"Test failed: {err}")
+            self.logger.error(f"QEMU stdout:\n{'\n'.join(qemu_stdout)}")
+            raise err
+
+        finally:
+            # remove any pending alarms
+            alarm(0)
+
+            # Ensure we never leave this block without killing the process
+            # empty stdout & stderr, as full pipes can hang the process
+            proc.kill()
+            _, _ = proc.communicate()
+            proc.wait()
